@@ -1541,37 +1541,10 @@ void REFramework::set_draw_ui(bool state, bool should_save) {
 }
 
 void REFramework::set_font_size_for_display(float size, float source_display_height) {
-    float current_display_width = 0.0f;
-    float current_display_height = 0.0f;
-    RECT client_rect{};
-
-    if (m_wnd != nullptr && GetClientRect(m_wnd, &client_rect)) {
-        current_display_width = static_cast<float>(client_rect.right - client_rect.left);
-        current_display_height = static_cast<float>(client_rect.bottom - client_rect.top);
-    }
-
-    // DD2 creates its window at 1280x720 before applying the user's graphics
-    // configuration. Treating that temporary client size as authoritative causes
-    // the saved font size to be scaled against 720p before the real resolution exists.
-    if (is_dd2_bootstrap_resolution(current_display_width, current_display_height)) {
-        set_font_size(size);
-
-        // Keep the saved display height as the scaling baseline when one exists.
-        // On a first run there is no baseline yet, so leave it unset until DD2
-        // reaches its configured resolution.
-        m_font_display_height = source_display_height > 0.0f ? source_display_height : 0.0f;
-        return;
-    }
-
-    if (source_display_height > 0.0f && current_display_height > 0.0f) {
-        size *= current_display_height / source_display_height;
-    }
-
+    // Font size is explicitly user-controlled. Resolution changes must not
+    // alter it; source_display_height is retained only for API compatibility.
+    static_cast<void>(source_display_height);
     set_font_size(size);
-
-    if (current_display_height > 0.0f) {
-        m_font_display_height = current_display_height;
-    }
 }
 
 void REFramework::consume_input() {
@@ -1755,14 +1728,8 @@ void REFramework::process_ui_layout_save(bool from_present) {
 }
 
 void REFramework::scale_font_for_display(float display_height) {
-    if (display_height <= 0.0f) {
-        return;
-    }
-
-    if (m_font_display_height > 0.0f && m_font_display_height != display_height) {
-        m_font_size *= display_height / m_font_display_height;
-    }
-
+    // Track the display height for existing layout state, but never mutate
+    // the user-selected font size.
     m_font_display_height = display_height;
 }
 
