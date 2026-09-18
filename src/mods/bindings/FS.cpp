@@ -38,6 +38,14 @@ namespace detail {
 
             return datadir;
         }
+
+        if (wanted_subdir.find("$fonts") != std::string::npos) {
+            auto datadir = REFramework::get_persistent_dir() / "reframework" / "fonts";
+
+            ::fs::create_directories(datadir);
+
+            return datadir;
+        }
         
         // todo, other subdirs?
     }
