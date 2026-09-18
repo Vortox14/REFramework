@@ -56,6 +56,17 @@ extern "C" {
 namespace fs = std::filesystem;
 using namespace std::literals;
 
+namespace {
+constexpr float DD2_BOOTSTRAP_WIDTH = 1280.0f;
+constexpr float DD2_BOOTSTRAP_HEIGHT = 720.0f;
+
+bool is_dd2_bootstrap_resolution(float width, float height) {
+    return sdk::GameIdentity::get().is_dd2() &&
+           width == DD2_BOOTSTRAP_WIDTH &&
+           height == DD2_BOOTSTRAP_HEIGHT;
+}
+}
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 DEFINE_GUID(GUID_DEVINTERFACE_HID, 0x4D1E55B2L, 0xF16F, 0x11CF, 0x88, 0xCB, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30);
 DEFINE_GUID(XUSB_INTERFACE_CLASS_GUID, 0xEC87F1E3, 0xC13B, 0x4100, 0xB5, 0xF7, 0x8B, 0x84, 0xD5, 0x42, 0x60, 0xCB);
@@ -1530,11 +1541,26 @@ void REFramework::set_draw_ui(bool state, bool should_save) {
 }
 
 void REFramework::set_font_size_for_display(float size, float source_display_height) {
+    float current_display_width = 0.0f;
     float current_display_height = 0.0f;
     RECT client_rect{};
 
     if (m_wnd != nullptr && GetClientRect(m_wnd, &client_rect)) {
+        current_display_width = static_cast<float>(client_rect.right - client_rect.left);
         current_display_height = static_cast<float>(client_rect.bottom - client_rect.top);
+    }
+
+    // DD2 creates its window at 1280x720 before applying the user's graphics
+    // configuration. Treating that temporary client size as authoritative causes
+    // the saved font size to be scaled against 720p before the real resolution exists.
+    if (is_dd2_bootstrap_resolution(current_display_width, current_display_height)) {
+        set_font_size(size);
+
+        // Keep the saved display height as the scaling baseline when one exists.
+        // On a first run there is no baseline yet, so leave it unset until DD2
+        // reaches its configured resolution.
+        m_font_display_height = source_display_height > 0.0f ? source_display_height : 0.0f;
+        return;
     }
 
     if (source_display_height > 0.0f && current_display_height > 0.0f) {
@@ -1702,6 +1728,13 @@ void REFramework::ensure_ui_layout_baseline() {
         return;
     }
 
+    // DD2's initial 1280x720 client area is only a bootstrap resolution. Wait
+    // for the game to apply its own graphics configuration before recording the
+    // REFramework UI baseline.
+    if (is_dd2_bootstrap_resolution(display_size.x, display_size.y)) {
+        return;
+    }
+
     REFrameworkConfig::get()->set_ui_layout_state(
         static_cast<int32_t>(display_size.x),
         static_cast<int32_t>(display_size.y),
@@ -1779,15 +1812,6 @@ void REFramework::preserve_main_window_position(const char* window_name) {
         return;
     }
 
-    m_main_window_display_size = current_display_size;
-
-    const bool display_size_changed =
-        previous_display_size.x > 0.0f && previous_display_size.y > 0.0f &&
-        (previous_display_size.x != m_main_window_display_size.x ||
-         previous_display_size.y != m_main_window_display_size.y);
-
-    scale_font_for_display(m_main_window_display_size.y);
-
     if (!m_loaded_saved_ui_display_size) {
         m_loaded_saved_ui_display_size = true;
         const auto config_path = get_persistent_dir(REFrameworkConfig::REFRAMEWORK_CONFIG_NAME.data()).string();
@@ -1799,6 +1823,41 @@ void REFramework::preserve_main_window_position(const char* window_name) {
                 static_cast<float>(cfg.get<int32_t>(REFrameworkConfig::UI_MONITOR_HEIGHT_CONFIG_NAME.data()).value_or(0))};
         }
     }
+
+    if (is_dd2_bootstrap_resolution(current_display_size.x, current_display_size.y)) {
+        const bool saved_layout_is_bootstrap_resolution =
+            m_saved_ui_display_size.x == DD2_BOOTSTRAP_WIDTH &&
+            m_saved_ui_display_size.y == DD2_BOOTSTRAP_HEIGHT;
+
+        // A genuine saved 1280x720 layout is already authoritative. Otherwise,
+        // keep the previous ImGui settings untouched until DD2 applies its real
+        // configured resolution.
+        if (!saved_layout_is_bootstrap_resolution) {
+            if (const auto* settings = ImGui::FindWindowSettingsByID(ImHashStr(window_name)); settings != nullptr) {
+                ImGui::SetNextWindowPos(
+                    ImVec2{static_cast<float>(settings->Pos.x), static_cast<float>(settings->Pos.y)},
+                    ImGuiCond_Always);
+                ImGui::SetNextWindowSize(
+                    ImVec2{static_cast<float>(settings->Size.x), static_cast<float>(settings->Size.y)},
+                    ImGuiCond_Always);
+            }
+
+            if (m_saved_ui_display_size.y > 0.0f) {
+                m_font_display_height = m_saved_ui_display_size.y;
+            }
+
+            return;
+        }
+    }
+
+    m_main_window_display_size = current_display_size;
+
+    const bool display_size_changed =
+        previous_display_size.x > 0.0f && previous_display_size.y > 0.0f &&
+        (previous_display_size.x != m_main_window_display_size.x ||
+         previous_display_size.y != m_main_window_display_size.y);
+
+    scale_font_for_display(m_main_window_display_size.y);
 
     ImVec2 position{};
     ImVec2 window_size{};
